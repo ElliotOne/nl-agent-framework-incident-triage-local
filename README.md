@@ -1,122 +1,58 @@
 # nl-agent-framework-incident-triage-local
 
-An educational example demonstrating a **local-first incident triage assistant** in a C# console app for production-style on-call workflows.
+An educational **local-first incident triage assistant** built with C# and the **Microsoft Agent Framework**.
 
-This project uses **OllamaSharp** directly and focuses on one core idea: let the model draft triage output, then enforce severity and domain policy deterministically in code.
+This project now uses `AIAgent` + `AgentWorkflowBuilder` for orchestration, while keeping deterministic policy enforcement in code for severity and domain safety.
 
 ## Overview
 
-Live incidents often fail in the first 15 minutes because teams lose time deciding:
+The runtime flow:
 
-- How severe is this incident?
-- What should we do immediately?
-- Who should we escalate to?
-- What should we communicate to stakeholders?
+1. Operator enters incident details.
+2. `TriageAuthoringAgent` generates structured JSON triage output.
+3. `TriageReviewAgent` reviews and normalizes that JSON in a sequential workflow.
+4. App parses the typed `IncidentTriageReport`.
+5. Deterministic `TriagePolicyEnforcer` applies hard severity/domain guardrails.
+6. Final report + SLA hint is printed.
 
-This project demonstrates a practical pattern:
-
-1. Collect incident context from the operator
-2. Ask the local model for structured triage output
-3. Parse into a typed report contract
-4. Apply deterministic severity and domain policy enforcement
-5. Return actionable triage guidance and SLA hints
+If structured parsing fails, the app falls back to plain text triage mode.  
+`/stream` uses agent streaming output for real-time console rendering.
 
 ## What This Project Demonstrates
 
-- Single-agent incident triage flow (no multi-agent orchestration)
-- Local-first model usage with **OllamaSharp** (`OllamaApiClient`)
-- Structured JSON-first output mapped to `IncidentTriageReport`
-- Automatic fallback to plain-text mode if structured parsing fails
-- Deterministic severity override rules for reliability
-- Domain allowlist enforcement to prevent out-of-policy values
-- Console streaming mode for real-time response output
+- Microsoft Agent Framework agent creation with `ChatClientAgent`
+- Sequential workflow composition with `AgentWorkflowBuilder.BuildSequential(...)`
+- Local model integration through OpenAI-compatible endpoint (`Ollama`)
+- Structured JSON-first triage contract (`IncidentTriageReport`)
+- Deterministic post-processing guardrails in C#
 
 ## Prerequisites
 
 - .NET 10 SDK or later
-  https://dotnet.microsoft.com/
-
 - Ollama installed and running locally
-  https://ollama.ai/
+- A local chat model pulled (example):
 
-- A local chat model pulled in Ollama (example):
-  ```bash
-  ollama pull mistral:7b
-  ```
+```bash
+ollama pull mistral:7b
+```
 
 ## Quick Start
 
-Run from the project root:
+From the project root:
 
 ```bash
 dotnet run --project IncidentTriageLocalAgent
 ```
 
-Type `/exit` to quit.
+Commands:
 
-## Configuration
+- `/stream <incident>`
+- `/sample`
+- `/exit`
 
-Default config is in `appsettings.json`:
+## Test Inputs
 
-```json
-{
-  "Agent": {
-    "Provider": "ollama",
-    "BaseUrl": "http://localhost:11434",
-    "ModelId": "mistral:7b",
-    "Temperature": 0.1,
-    "MaxOutputTokens": 800
-  }
-}
-```
-
-Environment variable overrides are supported with prefix `ITA_`:
-
-- `ITA_Agent__Provider`
-- `ITA_Agent__BaseUrl`
-- `ITA_Agent__ModelId`
-- `ITA_Agent__Temperature`
-- `ITA_Agent__MaxOutputTokens`
-
-Example (Windows):
-
-```bash
-set ITA_Agent__BaseUrl=http://localhost:11434
-set ITA_Agent__ModelId=mistral:7b
-set ITA_Agent__Temperature=0.1
-dotnet run --project IncidentTriageLocalAgent
-```
-
-## How It Works
-
-1. Incident Input (`Program.cs`)
-- Reads incident text from the console.
-- Supports:
-  - normal mode: structured triage path
-  - `/stream <incident text>`: streaming response path
-
-2. Structured Triage (`Services/IncidentTriageService.cs`)
-- Requests JSON output for a typed `IncidentTriageReport`.
-- If parsing fails, falls back to plain text so interaction is resilient.
-
-3. Deterministic Policy Enforcement (`Services/TriagePolicyEnforcer.cs`)
-- Overrides severity where high-confidence impact rules apply.
-- Enforces domain allowlist:
-  - `API`, `Database`, `Queue`, `Networking`, `Compute`, `Storage`, `Identity`, `ThirdPartyDependency`, `Unknown`
-- Normalizes out-of-policy model domain values.
-
-4. Output + SLA Hint (`Program.cs`)
-- Prints triage report sections:
-  - summary
-  - severity
-  - domain
-  - immediate and stabilization actions
-  - escalation targets
-  - stakeholder update draft
-  - missing critical data
-- Adds SLA hint by final severity (`P1` to `P4`).
-
-## Example Prompts
+Use these sample incident prompts to validate severity classification, domain selection, and action quality:
 
 - `Checkout API p95 latency jumped from 220ms to 4.8s after deploy 2026-02-20 14:05 UTC. Error rate is 18% on POST /checkout. DB connections are 98% saturated. US-East customers report payment timeouts.`
 - `Login failures started at 2026-02-21 09:12 UTC. 42% of auth requests fail with upstream 503 from identity provider. No deploy today. All regions affected.`
@@ -127,6 +63,32 @@ dotnet run --project IncidentTriageLocalAgent
 Streaming example:
 
 - `/stream Login failures started at 2026-02-21 09:12 UTC. 42% of auth requests fail with upstream 503 from identity provider. No deploy today. All regions affected.`
+
+## Configuration
+
+`IncidentTriageLocalAgent/appsettings.json`:
+
+```json
+{
+  "Agent": {
+    "Provider": "ollama",
+    "BaseUrl": "http://localhost:11434/v1",
+    "ApiKey": "ollama",
+    "ModelId": "mistral:7b",
+    "Temperature": 0.1,
+    "MaxOutputTokens": 800
+  }
+}
+```
+
+Environment overrides (`ITA_` prefix):
+
+- `ITA_Agent__Provider`
+- `ITA_Agent__BaseUrl`
+- `ITA_Agent__ApiKey`
+- `ITA_Agent__ModelId`
+- `ITA_Agent__Temperature`
+- `ITA_Agent__MaxOutputTokens`
 
 ## Project Structure
 
@@ -141,36 +103,31 @@ Streaming example:
 |   |   +-- AgentAppConfig.cs
 |   +-- Domain/
 |   |   +-- IncidentTriageReport.cs
-|   +-- Llm/
-|   |   +-- OllamaChatClient.cs
 |   +-- Services/
 |   |   +-- IncidentTriageService.cs
 |   |   +-- TriagePolicyEnforcer.cs
 +-- LICENSE
-+-- README.md
 ```
-
-## Guardrails Checklist
-
-- Structured output first, with fallback path
-- Deterministic severity enforcement
-- Domain allowlist normalization
-- Local model operation only (no cloud dependency)
-- Action-oriented triage output contract
-
-## Notes
-
-- This is intentionally a small, local-first demo.
-- Streaming mode currently shows raw model output (policy enforcement is applied in the structured path).
 
 ## License
 
-See the [LICENSE](LICENSE) file for details.
+See the [LICENSE](LICENSE) file.
 
 ## Contributing
 
-Contributions are welcome for improvements to this project's current scope:
+Contributions are welcome for improvements within the current project scope.
 
-- Deterministic severity and routing rule quality
-- Schema validation and response auditing
-- Test coverage for policy enforcement behavior
+Suggested contribution areas:
+
+- Triage instruction quality and prompt robustness
+- Deterministic severity/domain policy rules
+- Structured response validation and error handling
+- Test coverage for policy enforcement and parsing paths
+- Console UX improvements for on-call workflows
+
+Typical contribution workflow:
+
+1. Fork the repo and create a feature branch.
+2. Make focused changes with clear commit messages.
+3. Run `dotnet build IncidentTriageLocalAgent` locally.
+4. Open a pull request describing the problem, approach, and verification.

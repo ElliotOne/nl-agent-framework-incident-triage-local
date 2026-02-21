@@ -1,8 +1,13 @@
 using IncidentTriageAgent.App;
 using IncidentTriageAgent.Domain;
-using IncidentTriageAgent.Llm;
 using IncidentTriageAgent.Services;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
+using OpenAI;
+using OpenAI.Chat;
+using System.ClientModel;
 using System.Text;
 
 var configuration = new ConfigurationBuilder()
@@ -14,10 +19,47 @@ var configuration = new ConfigurationBuilder()
 var config = AgentAppConfig.Load(configuration);
 config.Validate();
 
-var chatClient = new OllamaChatClient(new Uri(config.BaseUrl), config.ModelId);
-var triageService = new IncidentTriageService(chatClient);
+IChatClient chatClient =
+    new ChatClient(
+        config.ModelId,
+        new ApiKeyCredential(config.ApiKey),
+        new OpenAIClientOptions
+        {
+            Endpoint = new Uri(config.BaseUrl)
+        })
+    .AsIChatClient();
 
-Console.WriteLine("=== Incident Triage Agent (OllamaSharp Local-First) ===");
+AIAgent triageAuthoringAgent = new ChatClientAgent(
+    chatClient,
+    new ChatClientAgentOptions
+    {
+        Name = "TriageAuthoringAgent",
+        Instructions = IncidentTriageService.BuildStructuredInstructions()
+    });
+
+AIAgent triageReviewAgent = new ChatClientAgent(
+    chatClient,
+    new ChatClientAgentOptions
+    {
+        Name = "TriageReviewAgent",
+        Instructions = IncidentTriageService.BuildReviewerInstructions()
+    });
+
+AIAgent textModeAgent = new ChatClientAgent(
+    chatClient,
+    new ChatClientAgentOptions
+    {
+        Name = "TriageTextAgent",
+        Instructions = IncidentTriageService.BuildTextInstructions()
+    });
+
+AIAgent structuredWorkflowAgent = await AgentWorkflowBuilder
+    .BuildSequential(triageAuthoringAgent, triageReviewAgent)
+    .AsAgentAsync();
+
+var triageService = new IncidentTriageService(structuredWorkflowAgent, textModeAgent);
+
+Console.WriteLine("=== Incident Triage Agent (Microsoft Agent Framework Local-First) ===");
 Console.WriteLine($"Provider: {config.Provider} | Model: {config.ModelId}");
 Console.WriteLine($"Endpoint: {config.BaseUrl}");
 Console.WriteLine("Commands: /stream <incident>, /sample, /exit");
